@@ -1,12 +1,10 @@
-{
-  "projectId": "e-commerce-dde67",
-  "appId": "1:103950881288:web:198b06f898aa832b11f7bd",
-  "apiKey": "AIzaSyCmxV-o7PWM60tkxloLITzVUzs-UvjG_1k",
-  "authDomain": "e-commerce-dde67.firebaseapp.com",
-  "firestoreDatabaseId": "ai-studio-veloraluxurybout-cc545d32-697e-4564-8f79-ccab75c9ef54",
-  "storageBucket": "e-commerce-dde67.firebasestorage.app",
-  "messagingSenderId": "103950881288",
-  "measurementId": "",
-  "oAuthClientId": "103950881288-k1hjjg3kjs279otkkvgb88mg6j0j57bt.apps.googleusercontent.com",
-  "recaptchaSiteKey": ""
-}
+ {
+  apiKey: "AIzaSyAnw-JeJ0YvR_iDRjBANVrRDF1zp2BBsaw",
+  authDomain: "velora-store-7b13e.firebaseapp.com",
+  databaseURL: "https://velora-store-7b13e-default-rtdb.firebaseio.com",
+  projectId: "velora-store-7b13e",
+  storageBucket: "velora-store-7b13e.firebasestorage.app",
+  messagingSenderId: "288471952749",
+  appId: "1:288471952749:web:c62d4190256e6c3a2fbe64",
+  measurementId: "G-LXEKEGTPDW"
+};

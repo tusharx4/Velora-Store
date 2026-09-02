@@ -1,0 +1,53 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // HOW TO PUBLISH: Firebase Console -> Build -> Firestore Database -> Rules tab
+    // -> replace everything with this file -> Publish.
+    // (If firebase-applet-config.json names a non-default database, pick that
+    // database from the dropdown at the top first — rules are per database.)
+    //
+    // NOTE: These rules are intentionally permissive so the static (no-backend)
+    // storefront can read/write the catalog, orders, accounts, chats, inquiries
+    // and reviews directly. Tighten them before handling real customer data at scale.
+
+    match /users/{userId} {
+      allow read, write: if true;
+    }
+
+    match /orders/{orderId} {
+      allow read, write: if true;
+    }
+
+    match /chats/{chatId} {
+      allow read, write: if true;
+
+      match /messages/{messageId} {
+        allow read, write: if true;
+      }
+    }
+
+    match /inquiries/{inquiryId} {
+      allow read, write: if true;
+    }
+
+    match /reviews/{reviewId} {
+      allow read, write: if true;
+    }
+
+    match /products/{productId} {
+      allow read, write: if true;
+    }
+
+    match /categories/{categoryId} {
+      allow read, write: if true;
+    }
+
+    match /banners/{bannerId} {
+      allow read, write: if true;
+    }
+
+    match /settings/{docId} {
+      allow read, write: if true;
+    }
+  }
+}

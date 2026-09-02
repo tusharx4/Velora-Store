@@ -1,0 +1,11 @@
+{
+  "projectId": "velora-store-7b13e",
+  "appId": "1:288471952749:web:c62d4190256e6c3a2fbe64",
+  "apiKey": "AIzaSyAnw-JeJ0YvR_iDRjBANVrRDF1zp2BBsaw",
+  "authDomain": "velora-store-7b13e.firebaseapp.com",
+  "databaseURL": "https://velora-store-7b13e-default-rtdb.firebaseio.com",
+  "firestoreDatabaseId": "(default)",
+  "storageBucket": "velora-store-7b13e.firebasestorage.app",
+  "messagingSenderId": "288471952749",
+  "measurementId": "G-LXEKEGTPDW"
+}

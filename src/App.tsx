@@ -1,0 +1,854 @@
+import React, { useState, useEffect, useCallback } from 'react';
+import {
+  MessageCircle,
+  Truck,
+  ShieldCheck,
+  RotateCcw,
+  Lock,
+  User,
+} from 'lucide-react';
+import {
+  Product,
+  Category,
+  BannerSlide,
+  StoreSettings,
+  CartItem,
+  Order,
+  DeliveryZone,
+  AnalyticsSummary,
+  UserAccount,
+  AgentNotification,
+  getAllowedAdminTabs,
+} from './types';
+import {
+  subscribeToAgentNotifications,
+  agentJoinChat,
+} from './services/firebase';
+import {
+  INITIAL_PRODUCTS,
+  INITIAL_CATEGORIES,
+  INITIAL_BANNERS,
+  INITIAL_SETTINGS,
+  INITIAL_ORDERS,
+} from './data/initialData';
+import { api } from './services/api';
+import { formatBDT, openWhatsAppChat } from './utils/helpers';
+import { Navbar } from './components/Navbar';
+import { HeroSlider } from './components/HeroSlider';
+import { TrustBadges } from './components/TrustBadges';
+import { CategoryScroller } from './components/CategoryScroller';
+import { ProductDetailModal } from './components/ProductDetailModal';
+import { CartDrawer } from './components/CartDrawer';
+import { CheckoutModal } from './components/CheckoutModal';
+import { OrderTrackingModal } from './components/OrderTrackingModal';
+import { ShopPage } from './components/ShopPage';
+import { AboutPage } from './components/AboutPage';
+import { ContactPage } from './components/ContactPage';
+import { FlashSaleSection } from './components/FlashSaleSection';
+import { FlashSalePage } from './components/FlashSalePage';
+import { CategoryProductSections } from './components/CategoryProductSections';
+import { BrandLogo } from './components/BrandLogo';
+import { AuthModal } from './components/AuthModal';
+import { LiveChatWidget } from './components/LiveChatWidget';
+import { MobileHome } from './components/mobile/MobileHome';
+import { MobileBottomNav } from './components/mobile/MobileBottomNav';
+import { AccountPage } from './components/AccountPage';
+import { CartPage } from './components/CartPage';
+
+// Admin Components
+import { AdminLayout } from './components/admin/AdminLayout';
+import { AdminDashboard } from './components/admin/AdminDashboard';
+import { AdminProducts } from './components/admin/AdminProducts';
+import { AdminOrders } from './components/admin/AdminOrders';
+import { AdminCategories } from './components/admin/AdminCategories';
+import { AdminBanners } from './components/admin/AdminBanners';
+import { AdminSettings } from './components/admin/AdminSettings';
+import { AdminAIAssistant } from './components/admin/AdminAIAssistant';
+import { AdminFlashSales } from './components/admin/AdminFlashSales';
+import { AdminUsers } from './components/admin/AdminUsers';
+import { AdminFirebaseChats } from './components/admin/AdminFirebaseChats';
+import { CreateProductModal } from './components/admin/CreateProductModal';
+
+
+export function App() {
+  // Core Store Data – painted instantly from the offline cache, refreshed from Firestore in the background
+  const [boot] = useState(() => api.localSnapshot());
+  const [products, setProducts] = useState<Product[]>(boot.products);
+  const [categories, setCategories] = useState<Category[]>(boot.categories);
+  const [banners, setBanners] = useState<BannerSlide[]>(boot.banners);
+  const [settings, setSettings] = useState<StoreSettings>(boot.settings);
+  const [orders, setOrders] = useState<Order[]>(boot.orders);
+  // Instant offline analytics so the dashboard never sits on a spinner; refined from the cloud in loadData
+  const [analytics, setAnalytics] = useState<AnalyticsSummary | null>(() =>
+    api.computeAnalyticsSync(boot.orders, boot.products)
+  );
+  const [isLoading, setIsLoading] = useState(false);
+
+  // Router State
+  const [currentRoute, setCurrentRoute] = useState<string>('');
+  const [selectedCategory, setSelectedCategory] = useState<string>('all');
+
+  // Interactive UI State
+  const [cart, setCart] = useState<CartItem[]>(() => {
+    try {
+      const saved = localStorage.getItem('velora_cart');
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
+  const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
+  const [isCartOpen, setIsCartOpen] = useState(false);
+  const [isCheckoutOpen, setIsCheckoutOpen] = useState(false);
+  const [isTrackingOpen, setIsTrackingOpen] = useState(false);
+  const [checkoutZone, setCheckoutZone] = useState<DeliveryZone>('dhaka');
+
+  // Unified User & Authentication State
+  const [currentUser, setCurrentUser] = useState<UserAccount | null>(() => api.getCurrentUser());
+  const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
+  const [authModalTab, setAuthModalTab] = useState<'signin' | 'signup'>('signin');
+
+  // Live "connect to agent" requests from customers (bell panel in admin top bar)
+  const [pendingAgentRequests, setPendingAgentRequests] = useState<AgentNotification[]>([]);
+  const [focusChatId, setFocusChatId] = useState<string | null>(null);
+
+  // Admin Workspace State (survives a page reload while signed in as staff)
+  const [isAdminMode, setIsAdminMode] = useState<boolean>(() => {
+    try {
+      return sessionStorage.getItem('velora_admin_mode') === '1';
+    } catch {
+      return false;
+    }
+  });
+  const [adminTab, setAdminTab] = useState('dashboard');
+  const [isCreateProductOpen, setIsCreateProductOpen] = useState(false);
+
+  const enterAdmin = () => {
+    setIsAdminMode(true);
+    try {
+      sessionStorage.setItem('velora_admin_mode', '1');
+    } catch {
+      /* private mode */
+    }
+  };
+  const exitAdmin = () => {
+    setIsAdminMode(false);
+    try {
+      sessionStorage.removeItem('velora_admin_mode');
+    } catch {
+      /* private mode */
+    }
+  };
+
+  // Sync Cart to LocalStorage
+  useEffect(() => {
+    try {
+      localStorage.setItem('velora_cart', JSON.stringify(cart));
+    } catch (e) {
+      console.error(e);
+    }
+  }, [cart]);
+
+  // Load All Backend Data
+  const loadData = useCallback(async () => {
+    try {
+      const [prodsRes, cats, bans, setts, ordsRes, anas] = await Promise.all([
+        api.getProducts().catch(() => ({ total: INITIAL_PRODUCTS.length, products: INITIAL_PRODUCTS })),
+        api.getCategories().catch(() => INITIAL_CATEGORIES),
+        api.getBanners().catch(() => INITIAL_BANNERS),
+        api.getSettings().catch(() => INITIAL_SETTINGS),
+        api.getOrders().catch(() => ({ total: INITIAL_ORDERS.length, orders: INITIAL_ORDERS })),
+        api.getAnalytics().catch(() => null),
+      ]);
+      if (prodsRes && Array.isArray((prodsRes as any).products)) {
+        setProducts((prodsRes as any).products);
+      } else if (Array.isArray(prodsRes)) {
+        setProducts(prodsRes);
+      }
+      if (Array.isArray(cats)) setCategories(cats);
+      if (Array.isArray(bans)) setBanners(bans);
+      if (setts) setSettings(setts);
+      if (ordsRes && Array.isArray((ordsRes as any).orders)) {
+        setOrders((ordsRes as any).orders);
+      } else if (Array.isArray(ordsRes)) {
+        setOrders(ordsRes);
+      }
+      if (anas) setAnalytics(anas);
+    } catch (err) {
+      console.error('Failed to load store data:', err);
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadData();
+  }, [loadData]);
+
+  // Verify Current User Session on Mount
+  useEffect(() => {
+    api.fetchCurrentUser().then((user) => {
+      setCurrentUser(user);
+    }).catch(() => {
+      // Offline fallback: use local user
+    });
+  }, []);
+
+  // Subscribe to agent handover requests while any staff member is inside the admin panel
+  useEffect(() => {
+    if (!isAdminMode || !currentUser || (currentUser.role !== 'admin' && currentUser.role !== 'moderator')) {
+      setPendingAgentRequests([]);
+      return;
+    }
+    const unsubscribe = subscribeToAgentNotifications((list) => setPendingAgentRequests(list));
+    return unsubscribe;
+  }, [isAdminMode, currentUser?.role]);
+
+  // Accept a request from the bell panel: join the session and open it in Live Chats
+  const handleJoinAgentChat = async (chatId: string) => {
+    try {
+      await agentJoinChat(chatId, currentUser?.name || 'VELORA Agent', settings);
+      // Remove the bell item immediately after the handover succeeds. The Firestore
+      // listener will also remove it because its notification document is deleted.
+      setPendingAgentRequests((previous) => previous.filter((request) => request.chatId !== chatId));
+      setFocusChatId(chatId);
+      setAdminTab('live-chats');
+    } catch (err) {
+      console.warn('Join agent chat note:', err);
+      // The Firestore listener will restore the request if joining actually failed.
+    }
+  };
+
+  // While a moderator works in the admin panel, refresh their account every 30s so
+  // permission changes made by the administrator apply without signing out.
+  useEffect(() => {
+    if (!isAdminMode || currentUser?.role !== 'moderator') return;
+    const refresh = () => {
+      api.fetchCurrentUser().then((user) => {
+        setCurrentUser(user);
+        if (!user || (user.role !== 'admin' && user.role !== 'moderator')) setIsAdminMode(false);
+      }).catch(() => {});
+    };
+    const id = window.setInterval(refresh, 30_000);
+    const onFocus = () => refresh();
+    window.addEventListener('focus', onFocus);
+    return () => {
+      window.clearInterval(id);
+      window.removeEventListener('focus', onFocus);
+    };
+  }, [isAdminMode, currentUser?.role]);
+
+  const handleOpenAuth = (tab: 'signin' | 'signup' = 'signin') => {
+    setAuthModalTab(tab);
+    setIsAuthModalOpen(true);
+  };
+
+  const handleLogout = () => {
+    api.logout();
+    setCurrentUser(null);
+    exitAdmin();
+  };
+
+  const handleOpenAdminAccess = useCallback(() => {
+    const user = api.getCurrentUser();
+    if (user && (user.role === 'admin' || user.role === 'moderator')) {
+      enterAdmin();
+    } else {
+      // User is either not logged in or is a standard customer
+      setAuthModalTab('signin');
+      setIsAuthModalOpen(true);
+    }
+  }, []);
+
+  // Hash Navigation Listener
+  useEffect(() => {
+    const handleHashChange = () => {
+      const hash = window.location.hash.replace(/^#\/?/, '');
+      if (hash.startsWith('product/')) {
+        const slug = hash.replace('product/', '');
+        const found = products.find((p) => p.slug === slug);
+        if (found) {
+          setSelectedProduct(found);
+        }
+      } else if (hash.startsWith('admin')) {
+        const user = api.getCurrentUser();
+        if (user && (user.role === 'admin' || user.role === 'moderator')) {
+          enterAdmin();
+        } else {
+          setAuthModalTab('signin');
+          setIsAuthModalOpen(true);
+        }
+      } else {
+        setCurrentRoute(hash);
+      }
+    };
+
+    window.addEventListener('hashchange', handleHashChange);
+    handleHashChange();
+    return () => window.removeEventListener('hashchange', handleHashChange);
+  }, [products]);
+
+  const handleNavigate = (route: string) => {
+    window.location.hash = `#/${route}`;
+    setCurrentRoute(route);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  // Cart Functions
+  const handleAddToCart = (
+    product: Product,
+    quantity: number = 1,
+    size?: string,
+    color?: string
+  ) => {
+    const chosenSize = size || product.sizes[0] || 'Standard';
+    const chosenColor = color || product.colors[0]?.n || 'Standard';
+
+    setCart((prev) => {
+      const existingIdx = prev.findIndex(
+        (i) => i.pid === product.id && i.size === chosenSize && i.color === chosenColor
+      );
+      if (existingIdx > -1) {
+        const updated = [...prev];
+        updated[existingIdx].qty += quantity;
+        return updated;
+      }
+      return [
+        ...prev,
+        {
+          pid: product.id,
+          name: product.name,
+          slug: product.slug,
+          price: product.price,
+          img: product.img[0],
+          size: chosenSize,
+          color: chosenColor,
+          qty: quantity,
+        },
+      ];
+    });
+
+    setIsCartOpen(true);
+    if (selectedProduct) {
+      setSelectedProduct(null);
+    }
+  };
+
+  const handleUpdateQuantity = (
+    pid: string,
+    size?: string,
+    color?: string,
+    delta: number = 1
+  ) => {
+    setCart((prev) =>
+      prev
+        .map((item) => {
+          if (item.pid === pid && item.size === size && item.color === color) {
+            const newQty = item.qty + delta;
+            return newQty > 0 ? { ...item, qty: newQty } : null;
+          }
+          return item;
+        })
+        .filter(Boolean) as CartItem[]
+    );
+  };
+
+  const handleRemoveItem = (pid: string, size?: string, color?: string) => {
+    setCart((prev) =>
+      prev.filter(
+        (item) => !(item.pid === pid && item.size === size && item.color === color)
+      )
+    );
+  };
+
+  const handleOpenCheckout = (zone: DeliveryZone) => {
+    setCheckoutZone(zone);
+    setIsCartOpen(false);
+    setIsCheckoutOpen(true);
+  };
+
+  const handleOrderSuccess = (newOrder: Order) => {
+    setCart([]);
+    loadData();
+  };
+
+  const handleResetData = async () => {
+    if (!window.confirm('Reset all catalog and orders to default boutique dataset?')) return;
+    try {
+      await api.resetData();
+      await loadData();
+      alert('Data reset successfully!');
+    } catch (e) {
+      alert('Failed to reset data');
+    }
+  };
+
+  if (isLoading) {
+    return (
+      <div className="min-h-screen bg-[#f8f9fd] flex flex-col items-center justify-center space-y-4">
+        <div className="w-12 h-12 rounded-full bg-gradient-to-tr from-amber-500 to-amber-200 animate-spin flex items-center justify-center shadow-lg">
+          <div className="w-8 h-8 rounded-full bg-[#f8f9fd]" />
+        </div>
+        <p className="text-xs uppercase tracking-[0.25em] font-bold text-gray-800">
+          Loading VELORA Boutique...
+        </p>
+      </div>
+    );
+  }
+
+  const isStaffOrAdmin = currentUser && (currentUser.role === 'admin' || currentUser.role === 'moderator');
+
+  // Admin View (Protected for Admin and Moderator)
+  if (isAdminMode && isStaffOrAdmin) {
+    const allowedTabs = getAllowedAdminTabs(currentUser);
+    const can = (tab: string) => allowedTabs.includes(tab);
+    // A moderator can only land on tabs the administrator granted
+    const activeTab = can(adminTab) ? adminTab : allowedTabs[0] || '';
+    const selectTab = (tab: string) => {
+      if (can(tab)) setAdminTab(tab);
+    };
+
+    return (
+      <AdminLayout
+        currentTab={activeTab}
+        onSelectTab={selectTab}
+        allowedTabs={allowedTabs}
+        pendingAgentRequests={pendingAgentRequests}
+        onJoinAgentChat={handleJoinAgentChat}
+        onExitAdmin={exitAdmin}
+        onLogoutAdmin={handleLogout}
+        analytics={analytics}
+        settings={settings}
+        currentUser={currentUser}
+        onResetData={handleResetData}
+      >
+        {allowedTabs.length === 0 && (
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-xs p-10 text-center space-y-3">
+            <div className="w-12 h-12 mx-auto rounded-full bg-amber-50 border border-amber-200 flex items-center justify-center">
+              <Lock className="w-5 h-5 text-amber-600" />
+            </div>
+            <h2 className="text-base font-bold text-slate-900">No areas assigned yet</h2>
+            <p className="text-xs text-slate-500 max-w-sm mx-auto">
+              Your moderator account is active, but the administrator has not granted access to any section yet.
+              Ask them to enable the areas you need from <b>Users &amp; Roles</b>.
+            </p>
+            <p className="text-xs text-slate-500 font-bn">অ্যাডমিন অনুমতি দিলে এই পেজ নিজে থেকেই আপডেট হয়ে যাবে।</p>
+          </div>
+        )}
+        {activeTab === 'dashboard' && (
+          <AdminDashboard
+            analytics={analytics}
+            orders={orders}
+            onSelectTab={selectTab}
+            onOpenNewProduct={() => can('products') && setIsCreateProductOpen(true)}
+          />
+        )}
+        {activeTab === 'products' && (
+          <AdminProducts
+            products={products}
+            categories={categories}
+            onRefresh={loadData}
+            onOpenAI={() => selectTab('ai-assistant')}
+            onOpenNewProduct={() => setIsCreateProductOpen(true)}
+          />
+        )}
+        {activeTab === 'flash-sales' && (
+          <AdminFlashSales
+            products={products}
+            settings={settings}
+            onRefresh={loadData}
+          />
+        )}
+        {activeTab === 'orders' && (
+          <AdminOrders orders={orders} onRefresh={loadData} />
+        )}
+        {activeTab === 'live-chats' && (
+          <AdminFirebaseChats
+            currentUser={currentUser}
+            focusSessionId={focusChatId}
+            settings={settings}
+            onAgentJoined={(chatId) => {
+              setPendingAgentRequests((previous) => previous.filter((request) => request.chatId !== chatId));
+            }}
+          />
+        )}
+        {activeTab === 'categories' && (
+          <AdminCategories categories={categories} onRefresh={loadData} />
+        )}
+        {activeTab === 'banners' && (
+          <AdminBanners banners={banners} onRefresh={loadData} />
+        )}
+        {activeTab === 'ai-assistant' && (
+          <AdminAIAssistant
+            categories={categories}
+            onProductCreated={() => {
+              loadData();
+              selectTab('products');
+            }}
+          />
+        )}
+        {activeTab === 'users' && currentUser?.role === 'admin' && (
+          <AdminUsers currentUser={currentUser} />
+        )}
+        {activeTab === 'settings' && currentUser?.role === 'admin' && (
+          <AdminSettings settings={settings} onRefresh={loadData} />
+        )}
+
+        {can('products') && (
+          <CreateProductModal
+            isOpen={isCreateProductOpen}
+            onClose={() => setIsCreateProductOpen(false)}
+            categories={categories}
+            onProductCreated={() => {
+              loadData();
+              setIsCreateProductOpen(false);
+            }}
+          />
+        )}
+      </AdminLayout>
+    );
+  }
+
+  return (
+    <div className="min-h-screen ambient-bg flex flex-col antialiased text-[#12151f] selection:bg-amber-500 selection:text-white">
+      {/* Top Floating Glass Navbar */}
+      <Navbar
+        currentRoute={currentRoute}
+        onNavigate={handleNavigate}
+        cart={cart}
+        onOpenCart={() => setIsCartOpen(true)}
+        onOpenTracking={() => setIsTrackingOpen(true)}
+        products={products}
+        settings={settings}
+        currentUser={currentUser}
+        onOpenAuth={handleOpenAuth}
+        onLogout={handleLogout}
+        onOpenAdmin={handleOpenAdminAccess}
+      />
+
+      {/* Main Container */}
+      <main className="max-w-7xl mx-auto px-4 sm:px-6 flex-1 w-full pb-16">
+        {/* Route: Flash Sale Page */}
+        {currentRoute === 'flash-sales' || currentRoute === 'flash' || (currentRoute.startsWith('shop?') && currentRoute.includes('flash=true')) ? (
+          <FlashSalePage
+            products={products}
+            categories={categories}
+            onOpenProduct={(p) => setSelectedProduct(p)}
+            onAddToCart={(p, e) => {
+              e.stopPropagation();
+              handleAddToCart(p, 1);
+            }}
+            onNavigate={handleNavigate}
+            settings={settings}
+          />
+        ) : currentRoute === 'shop' || currentRoute.startsWith('shop?') ? (
+          <ShopPage
+            products={products}
+            categories={categories}
+            selectedCategory={selectedCategory}
+            onSelectCategory={setSelectedCategory}
+            onOpenProduct={(p) => setSelectedProduct(p)}
+            onAddToCart={(p, e) => {
+              e.stopPropagation();
+              handleAddToCart(p, 1);
+            }}
+            settings={settings}
+            initialSearch={new URLSearchParams(currentRoute.split('?')[1] || '').get('search') || ''}
+          />
+        ) : currentRoute === 'cart' ? (
+          <CartPage
+            cart={cart}
+            onUpdateQuantity={handleUpdateQuantity}
+            onRemoveItem={handleRemoveItem}
+            onOpenCheckout={handleOpenCheckout}
+            settings={settings}
+            onNavigate={handleNavigate}
+          />
+        ) : currentRoute === 'about' ? (
+          <AboutPage settings={settings} onNavigate={handleNavigate} />
+        ) : currentRoute === 'contact' ? (
+          <ContactPage settings={settings} />
+        ) : currentRoute === 'account' ? (
+          currentUser ? (
+            <AccountPage
+              currentUser={currentUser}
+              settings={settings}
+              onUserUpdated={setCurrentUser}
+              onLogout={handleLogout}
+              onNavigate={handleNavigate}
+            />
+          ) : (
+            <div className="max-w-md mx-auto py-16 md:py-24 text-center space-y-4 animate-in fade-in duration-300">
+              <div className="w-14 h-14 mx-auto rounded-2xl bg-amber-50 border border-amber-200 flex items-center justify-center">
+                <Lock className="w-6 h-6 text-amber-600" />
+              </div>
+              <h2 className="text-lg font-bold text-slate-900">Sign in to view your account</h2>
+              <p className="text-xs text-slate-500 font-bn">
+                আপনার প্রোফাইল, ডেলিভারি address আর সব অর্ডার দেখতে সাইন ইন করুন।
+              </p>
+              <div className="flex items-center justify-center gap-2.5">
+                <button
+                  onClick={() => handleOpenAuth('signin')}
+                  className="px-5 py-2.5 rounded-xl bg-[#12151f] text-amber-300 text-xs font-extrabold hover:bg-black transition-colors cursor-pointer"
+                >
+                  Sign In
+                </button>
+                <button
+                  onClick={() => handleNavigate('shop')}
+                  className="px-5 py-2.5 rounded-xl border border-slate-300 text-xs font-bold text-slate-700 hover:bg-slate-50 transition-colors cursor-pointer"
+                >
+                  Keep Shopping
+                </button>
+              </div>
+            </div>
+          )
+        ) : (
+          /* Route: Home */
+          <>
+            {/* Mobile-first Daraz-style homepage (small screens only) */}
+            <MobileHome
+              products={products}
+              categories={categories}
+              banners={banners}
+              settings={settings}
+              onOpenProduct={(p) => setSelectedProduct(p)}
+              onAddToCart={(p, e) => {
+                e.stopPropagation();
+                handleAddToCart(p, 1);
+              }}
+              onNavigate={handleNavigate}
+              onSelectCategory={setSelectedCategory}
+            />
+
+            {/* Desktop / tablet homepage */}
+            <div className="hidden md:block space-y-12 py-2 animate-in fade-in duration-300">
+            {/* Hero Slider */}
+            <HeroSlider banners={banners} onNavigate={handleNavigate} />
+
+            {/* Live Flash Sale Showcase Section */}
+            {settings.flashSaleActive && (
+              <FlashSaleSection
+                products={products}
+                onOpenProduct={(p) => setSelectedProduct(p)}
+                onAddToCart={(p, e) => {
+                  e.stopPropagation();
+                  handleAddToCart(p, 1);
+                }}
+                onViewAllFlashDeals={() => handleNavigate('flash-sales')}
+                whatsappPhone={settings.whatsappNumber}
+              />
+            )}
+
+            {/* Fast Value Proposition Badges */}
+            <TrustBadges settings={settings} />
+
+            {/* Category Scroller Navigation */}
+            <CategoryScroller
+              categories={categories}
+              selectedCategory={selectedCategory}
+              onSelectCategory={(slug) => {
+                setSelectedCategory(slug);
+                handleNavigate(`shop?category=${slug}`);
+              }}
+            />
+
+            {/* Curated Products From Every Category */}
+            <CategoryProductSections
+              categories={categories}
+              products={products}
+              onOpenProduct={(p) => setSelectedProduct(p)}
+              onAddToCart={(p, e) => {
+                e.stopPropagation();
+                handleAddToCart(p, 1);
+              }}
+              onSelectCategory={(slug) => setSelectedCategory(slug)}
+              onNavigate={handleNavigate}
+              settings={settings}
+            />
+
+            {/* Direct WhatsApp Concierge Banner */}
+            <section className="glass-panel-strong rounded-3xl p-6 sm:p-10 border border-white/80 shadow-lg flex flex-col md:flex-row items-center justify-between gap-6">
+              <div className="space-y-2 text-center md:text-left">
+                <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-100/80 text-emerald-800 text-xs font-semibold">
+                  <MessageCircle className="w-3.5 h-3.5 text-emerald-600" />
+                  <span>Personal Shopping Concierge</span>
+                </div>
+                <h3 className="text-xl sm:text-2xl font-medium text-gray-950">
+                  Looking for bespoke sizing or bridal consultations?
+                </h3>
+                <p className="text-xs sm:text-sm text-gray-600 font-bn max-w-lg">
+                  আমাদের ফ্যাশন কনসালট্যান্টের সাথে সরাসরি হোয়াটসঅ্যাপে কথা বলুন এবং কাস্টম অর্ডার কনফার্ম করুন।
+                </p>
+              </div>
+
+              <button
+                type="button"
+                onClick={() =>
+                  openWhatsAppChat(
+                    settings.whatsappNumber,
+                    'Assalamu Alaikum, I would like to inquire about customized boutique orders at VELORA.'
+                  )
+                }
+                className="wa-gradient-btn px-6 py-3.5 rounded-full text-xs sm:text-sm font-bold uppercase tracking-wider flex items-center gap-2 shadow-md hover:scale-105 transition-all whitespace-nowrap animate-wa-pulse cursor-pointer"
+              >
+                <MessageCircle className="w-4 h-4" />
+                <span className="font-bn">হোয়াটসঅ্যাপে চ্যাট করুন</span>
+              </button>
+            </section>
+            </div>
+          </>
+        )}
+      </main>
+
+      {/* Footer */}
+      <footer className="bg-[#12151f] text-[#f4efe6] pt-14 pb-24 md:pb-8 border-t border-white/10 mt-auto">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 grid grid-cols-1 md:grid-cols-4 gap-8 mb-10">
+          <div className="space-y-3 md:col-span-2">
+            <BrandLogo
+              variant="light"
+              size="md"
+              showTagline={true}
+              onClick={() => handleNavigate('')}
+            />
+            <p className="text-xs text-gray-400 max-w-sm leading-relaxed pt-1">
+              {settings.storeTaglineEn} — Handloom jamdani sarees, tailored royal panjabis, artisan footwear, and pure oud perfumery.
+            </p>
+            <p className="text-xs font-bn text-amber-300/80">
+              {settings.addressBn} · ধানমন্ডি, ঢাকা
+            </p>
+          </div>
+
+          <div className="space-y-2 text-xs">
+            <h4 className="font-bold uppercase tracking-wider text-amber-400 mb-3 text-[11px]">
+              Customer Service
+            </h4>
+            <ul className="space-y-1.5 text-gray-400">
+              <li>
+                <button
+                  onClick={() => {
+                    if (currentUser) handleNavigate('account');
+                    else handleOpenAuth('signin');
+                  }}
+                  className="hover:text-white transition-colors cursor-pointer flex items-center gap-1.5"
+                >
+                  <User className="w-3.5 h-3.5 text-amber-400/70" />
+                  <span>My Account & Orders</span>
+                </button>
+              </li>
+              <li>
+                <button onClick={() => setIsTrackingOpen(true)} className="hover:text-white transition-colors cursor-pointer">
+                  Track Order
+                </button>
+              </li>
+              <li>
+                <button onClick={() => handleNavigate('about')} className="hover:text-white transition-colors cursor-pointer">
+                  About Boutique
+                </button>
+              </li>
+              <li>
+                <button onClick={() => handleNavigate('contact')} className="hover:text-white transition-colors cursor-pointer">
+                  Contact & Store Location
+                </button>
+              </li>
+            </ul>
+          </div>
+
+          <div className="space-y-2 text-xs">
+            <h4 className="font-bold uppercase tracking-wider text-amber-400 mb-3 text-[11px]">
+              Delivery & Payment
+            </h4>
+            <div className="space-y-2 text-gray-400">
+              <p className="flex items-center gap-2">
+                <Truck className="w-3.5 h-3.5 text-amber-400" />
+                <span>Inside Dhaka: ৳{settings.shippingFeeInsideDhaka} (24-48 hrs)</span>
+              </p>
+              <p className="flex items-center gap-2">
+                <Truck className="w-3.5 h-3.5 text-amber-400" />
+                <span>Outside Dhaka: ৳{settings.shippingFeeOutsideDhaka} (48-72 hrs)</span>
+              </p>
+              <p className="flex items-center gap-2 text-emerald-400">
+                <ShieldCheck className="w-3.5 h-3.5" />
+                <span>Cash on Delivery & bKash Verified</span>
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 pt-6 border-t border-white/10 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-gray-500">
+          <p>© {new Date().getFullYear()} VELORA Luxury Boutique. All rights reserved.</p>
+          <div className="flex items-center gap-4">
+            <span>Dhanmondi, Dhaka</span>
+            <span>•</span>
+            <span>WhatsApp: +{settings.whatsappNumber}</span>
+          </div>
+        </div>
+      </footer>
+
+      {/* Floating Firebase Live Chat Widget */}
+      <LiveChatWidget
+        currentUser={currentUser}
+        settings={settings}
+        onOpenAuth={() => {
+          setAuthModalTab('signin');
+          setIsAuthModalOpen(true);
+        }}
+      />
+
+      {/* Mobile bottom tab bar */}
+      <MobileBottomNav
+        currentRoute={currentRoute}
+        cartCount={cart.reduce((sum, item) => sum + item.qty, 0)}
+        isSignedIn={!!currentUser}
+        onNavigate={handleNavigate}
+        onOpenAuth={(tab) => {
+          setAuthModalTab(tab || 'signin');
+          setIsAuthModalOpen(true);
+        }}
+      />
+
+      {/* Modals & Slide-overs */}
+      <ProductDetailModal
+        product={selectedProduct}
+        allProducts={products}
+        onClose={() => setSelectedProduct(null)}
+        onAddToCart={handleAddToCart}
+        onOpenProduct={(p) => setSelectedProduct(p)}
+        settings={settings}
+      />
+
+      {/* CartDrawer is preserved for the legacy "Open Cart" hooks but the navbar
+          and mobile bottom bar now navigate to /cart instead of opening the drawer. */}
+
+      <CheckoutModal
+        isOpen={isCheckoutOpen}
+        onClose={() => setIsCheckoutOpen(false)}
+        cart={cart}
+        deliveryZone={checkoutZone}
+        settings={settings}
+        onOrderSuccess={handleOrderSuccess}
+        customer={currentUser}
+      />
+
+      <OrderTrackingModal
+        isOpen={isTrackingOpen}
+        onClose={() => setIsTrackingOpen(false)}
+      />
+
+      {/* Unified Login & Sign-up Modal for All Users and Roles */}
+      <AuthModal
+        isOpen={isAuthModalOpen}
+        onClose={() => setIsAuthModalOpen(false)}
+        defaultTab={authModalTab}
+        onAuthSuccess={(user) => {
+          setCurrentUser(user);
+          // Reload store data with the new session (staff see live cloud orders & analytics)
+          loadData();
+          if (user.role === 'admin' || user.role === 'moderator') {
+            enterAdmin();
+          }
+        }}
+      />
+    </div>
+  );
+}
+export default App;
